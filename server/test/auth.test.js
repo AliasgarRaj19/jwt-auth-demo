@@ -536,4 +536,83 @@ describe('refresh and reset token security', () => {
     expect(emailArgs.text).toContain('https://signalgrowth.in/jwt-auth-demo/reset-password?token=token123');
     expect(emailArgs.html).toContain('https://signalgrowth.in/jwt-auth-demo/reset-password?token=token123');
   });
+
+  it('invalidates older unused password-reset tokens immediately when a new one is issued', async () => {
+    const tokenRecords = new Map();
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+    mocks.randomToken.mockReturnValueOnce('reset-a').mockReturnValueOnce('reset-b');
+    mocks.prisma.passwordResetToken.updateMany.mockImplementation(async ({ where }) => {
+      for (const record of tokenRecords.values()) {
+        if (record.userId === where.userId && record.usedAt == null) {
+          record.usedAt = new Date();
+        }
+      }
+      return { count: 1 };
+    });
+    mocks.prisma.passwordResetToken.create.mockImplementation(async ({ data }) => {
+      const record = {
+        id: data.tokenHash === 'hash:reset-a' ? 'prt-a' : 'prt-b',
+        userId: data.userId,
+        tokenHash: data.tokenHash,
+        expiresAt: data.expiresAt,
+        usedAt: null
+      };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.passwordResetToken.findFirst.mockImplementation(async ({ where: { tokenHash, usedAt } }) => {
+      const record = tokenRecords.get(tokenHash);
+      if (!record) return null;
+      if (usedAt === null && record.usedAt != null) return null;
+      return record;
+    });
+    mocks.sendEmail.mockResolvedValue({});
+
+    await auth.requestPasswordReset('user@example.com');
+    const first = await auth.validatePasswordResetToken('reset-a');
+    expect(first.status).toBe('ok');
+
+    await auth.requestPasswordReset('user@example.com');
+
+    const oldAfterSecond = await auth.validatePasswordResetToken('reset-a');
+    const newAfterSecond = await auth.validatePasswordResetToken('reset-b');
+
+    expect(oldAfterSecond.status).toBe('invalid');
+    expect(newAfterSecond.status).toBe('ok');
+    expect(mocks.prisma.passwordResetToken.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: 'u1', usedAt: null }
+    }));
+  });
+
+  it('allows the newer password-reset token exactly once and then rejects reuse', async () => {
+    const created = new Map();
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'user@example.com', isActive: true });
+    mocks.randomToken.mockReturnValueOnce('reset-b');
+    mocks.prisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 });
+    mocks.prisma.passwordResetToken.create.mockImplementation(async ({ data }) => {
+      created.set(data.tokenHash, { id: 'prt-b', userId: data.userId, expiresAt: data.expiresAt, usedAt: null });
+      return data;
+    });
+    mocks.prisma.passwordResetToken.findFirst.mockImplementation(({ where: { tokenHash } }) => {
+      const record = created.get(tokenHash);
+      if (!record || record.usedAt) return null;
+      return record;
+    });
+    mocks.prisma.user.update.mockResolvedValue({ id: 'u1' });
+    mocks.prisma.passwordResetToken.update.mockImplementation(async ({ where: { id } }) => {
+      for (const record of created.values()) {
+        if (record.id === id) record.usedAt = new Date();
+      }
+      return [...created.values()].find((record) => record.id === id);
+    });
+    mocks.prisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+    mocks.sendEmail.mockResolvedValue({});
+
+    await auth.requestPasswordReset('user@example.com');
+    const first = await auth.resetPassword('reset-b', 'new-password');
+    const second = await auth.resetPassword('reset-b', 'new-password-2');
+
+    expect(first.status).toBe('ok');
+    expect(second.status).toBe('invalid');
+  });
 });

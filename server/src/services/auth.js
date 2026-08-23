@@ -231,7 +231,10 @@ export async function requestPasswordReset(email) {
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (!user) return { ok: true };
   const token = randomToken();
-  await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
+  await prisma.$transaction([
+    prisma.passwordResetToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } }),
+    prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } })
+  ]);
   const resetUrl = buildPublicUrl(`/reset-password?token=${encodeURIComponent(token)}`);
   await sendEmail({ to: user.email, subject: 'Reset your password', text: resetUrl, html: `<a href="${resetUrl}">${resetUrl}</a>` });
   return { ok: true };
