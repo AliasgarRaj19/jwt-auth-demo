@@ -10,6 +10,7 @@ import {
   refreshSession,
   registerUser,
   resendVerificationEmail,
+  resendVerificationForActionToken,
   requestPasswordReset,
   resetPassword,
   validatePasswordResetToken,
@@ -20,12 +21,19 @@ const router = Router();
 
 router.post('/register', rateLimit((req) => `register:${req.ip}`, rateLimitPresets.register), async (req, res) => {
   const data = registrationSchema.parse(req.body);
-  res.json(await registerUser(data));
+  const result = await registerUser(data);
+  if (result.recoveryToken) {
+    res.cookie('verificationAction', result.recoveryToken, cookieOptions(15 * 60 * 1000));
+  }
+  res.json(result);
 });
 
 router.post('/resend-verification', rateLimit((req) => `resend:${req.ip}`, rateLimitPresets.resendVerification), async (req, res) => {
-  const { email } = loginSchema.pick({ email: true }).parse(req.body);
-  res.json(await resendVerificationEmail(email));
+  const result = await resendVerificationForActionToken(req.cookies.verificationAction);
+  if (result.status === 'verified') {
+    res.clearCookie('verificationAction', clearCookieOptions());
+  }
+  res.json(result);
 });
 
 router.post('/verify-email', rateLimit((req) => `verify:${req.ip}`, rateLimitPresets.verifyEmail), async (req, res) => {
@@ -36,6 +44,10 @@ router.post('/verify-email', rateLimit((req) => `verify:${req.ip}`, rateLimitPre
 router.post('/login', rateLimit((req) => `login:${req.ip}`, rateLimitPresets.login), async (req, res) => {
   const { email, password } = loginSchema.parse(req.body);
   const result = await loginUser(email, password);
+  if (result.code === 'ACCOUNT_UNVERIFIED') {
+    res.cookie('verificationAction', result.recoveryToken, cookieOptions(15 * 60 * 1000));
+    return res.json({ code: 'ACCOUNT_UNVERIFIED', email: result.email });
+  }
   if (result.status) return res.status(400).json({ message: 'Invalid credentials or account state' });
   const csrfToken = newCsrfToken();
   res.cookie('refreshToken', result.refreshToken, cookieOptions(7 * 24 * 60 * 60_000));
@@ -58,6 +70,7 @@ router.post('/logout', async (req, res) => {
   if (token) await logoutSession(token);
   res.clearCookie('refreshToken', clearCookieOptions());
   res.clearCookie('csrfToken', clearCookieOptions());
+  res.clearCookie('verificationAction', clearCookieOptions());
   res.json({ ok: true });
 });
 

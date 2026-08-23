@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
 import { hashPassword, verifyPassword, randomToken, hashSecret } from '../lib/crypto.js';
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jwt.js';
+import { signAccessToken, signRefreshToken, signVerificationActionToken, verifyRefreshToken, verifyVerificationActionToken } from '../lib/jwt.js';
 import { sendEmail } from './email.js';
 import { env } from '../config/env.js';
 
@@ -54,6 +54,10 @@ async function storeMasterAdminRefreshToken(masterAdminId, role, familyId) {
   return null;
 }
 
+async function createVerificationActionToken(userId) {
+  return signVerificationActionToken({ sub: userId });
+}
+
 async function rotateUserRefreshToken(currentTokenHash, stored, user) {
   const newAccessToken = await signAccessToken({ sub: user.id, role: user.role });
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -99,13 +103,17 @@ export async function registerUser(data) {
   const token = randomToken();
   await prisma.verificationToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
   const verificationUrl = buildPublicUrl(`/verify-email?token=${encodeURIComponent(token)}`);
-  await sendEmail({
-    to: user.email,
-    subject: 'Verify your email',
-    text: verificationUrl,
-    html: `<p>Click to verify your email:</p><p><a href="${verificationUrl}">${verificationUrl}</a></p>`
-  });
-  return { email: maskEmail(user.email) };
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: 'Verify your email',
+      text: verificationUrl,
+      html: `<p>Click to verify your email:</p><p><a href="${verificationUrl}">${verificationUrl}</a></p>`
+    });
+    return { email: maskEmail(user.email) };
+  } catch {
+    return { code: 'VERIFICATION_EMAIL_FAILED', email: maskEmail(user.email), recoveryToken: await createVerificationActionToken(user.id) };
+  }
 }
 
 export async function verifyEmailToken(token) {
@@ -133,10 +141,29 @@ export async function resendVerificationEmail(email) {
   return { ok: true };
 }
 
+export async function resendVerificationForActionToken(actionToken) {
+  const rawToken = typeof actionToken === 'string' ? actionToken.trim() : '';
+  if (!rawToken) return { status: 'sent' };
+  const { payload } = await verifyVerificationActionToken(rawToken).catch(() => ({ payload: null }));
+  if (!payload?.sub) return { status: 'sent' };
+  const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+  if (!user) return { status: 'sent' };
+  if (user.emailVerifiedAt) return { status: 'verified' };
+  await prisma.verificationToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } });
+  const token = randomToken();
+  await prisma.verificationToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
+  const verificationUrl = buildPublicUrl(`/verify-email?token=${encodeURIComponent(token)}`);
+  await sendEmail({ to: user.email, subject: 'Verify your email', text: verificationUrl, html: `<a href="${verificationUrl}">${verificationUrl}</a>` });
+  return { status: 'sent' };
+}
+
 export async function loginUser(email, password) {
   const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-  if (!user || !user.isActive || !user.emailVerifiedAt) return { status: 'generic' };
+  if (!user || !user.isActive) return { status: 'generic' };
   if (!(await verifyPassword(user.passwordHash, password))) return { status: 'generic' };
+  if (!user.emailVerifiedAt) {
+    return { code: 'ACCOUNT_UNVERIFIED', email: maskEmail(user.email), recoveryToken: await createVerificationActionToken(user.id) };
+  }
   const accessToken = await signAccessToken({ sub: user.id, role: user.role });
   const refreshToken = await storeUserRefreshToken(user.id, user.role, crypto.randomUUID());
   return { user, accessToken, refreshToken };

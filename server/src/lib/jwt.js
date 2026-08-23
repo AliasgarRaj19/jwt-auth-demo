@@ -26,6 +26,26 @@ export async function signRefreshToken(payload) {
     .setExpirationTime('7d')
     .sign(refreshKey);
 }
+
+export async function signVerificationActionToken(payload) {
+  return new SignJWT({ ...payload, typ: 'verification-action', purpose: 'resend-verification' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setJti(crypto.randomUUID())
+    .setIssuer(env.JWT_ISSUER)
+    .setAudience(env.JWT_AUDIENCE)
+    .setSubject(payload.sub)
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .sign(accessKey);
+}
+
+export async function verifyVerificationActionToken(token) {
+  const result = await jwtVerify(token, accessKey, { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE, algorithms: ['HS256'] });
+  if (result.payload.typ !== 'verification-action') throw new Error('Invalid token type');
+  if (result.payload.purpose !== 'resend-verification') throw new Error('Invalid token purpose');
+  return result;
+}
+
 export async function verifyAccessToken(token) {
   const result = await jwtVerify(token, accessKey, { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE, algorithms: ['HS256'] });
   if (result.payload.typ !== 'access') throw new Error('Invalid token type');

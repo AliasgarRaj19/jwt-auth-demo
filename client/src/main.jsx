@@ -134,6 +134,7 @@ function AppRoutes() {
         <Route path="/register-success" element={<PublicPage><RegisterSuccess /></PublicPage>} />
         <Route path="/verify-email" element={<PublicPage><VerifyEmail /></PublicPage>} />
         <Route path="/verify-expired" element={<PublicPage><VerificationExpired /></PublicPage>} />
+        <Route path="/unverified" element={<PublicPage><Unverified /></PublicPage>} />
         <Route path="/forgot-password" element={<PublicPage><ForgotPassword /></PublicPage>} />
         <Route path="/reset-password" element={<PublicPage><ResetPassword /></PublicPage>} />
         <Route path="/dashboard" element={<UserProtectedRoute><Panel /></UserProtectedRoute>} />
@@ -154,7 +155,7 @@ function Login() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  return <Shell title="Login"><Message text={msg} error /><form onSubmit={async (e) => { e.preventDefault(); setBusy(true); setMsg(''); try { const data = await request('/api/auth/login', { method: 'POST', body: form }); auth.setState((prev) => mergeAuthSession(prev, data)); broadcastSessionState(data); navigate('/dashboard', { replace: true }); } catch (err) { setMsg(err.message); } finally { setBusy(false); } }} className="space-y-4"><Input label="Email Address" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /><Input label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><div className="flex flex-wrap gap-3"><Button disabled={busy}>{busy ? 'Signing in...' : 'Login'}</Button><Link className="text-cyan-300" to="/forgot-password">Forgot Password</Link><Link className="text-cyan-300" to="/register">Registration</Link><Link className="text-cyan-300" to="/admin/login">Admin Login</Link></div></form></Shell>;
+  return <Shell title="Login"><Message text={msg} error /><form onSubmit={async (e) => { e.preventDefault(); setBusy(true); setMsg(''); try { const data = await request('/api/auth/login', { method: 'POST', body: form }); if (data.code === 'ACCOUNT_UNVERIFIED') { navigate('/unverified', { replace: true, state: { email: data.email } }); return; } auth.setState((prev) => mergeAuthSession(prev, data)); broadcastSessionState(data); navigate('/dashboard', { replace: true }); } catch (err) { setMsg(err.message); } finally { setBusy(false); } }} className="space-y-4"><Input label="Email Address" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /><Input label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><div className="flex flex-wrap gap-3"><Button disabled={busy}>{busy ? 'Signing in...' : 'Login'}</Button><Link className="text-cyan-300" to="/forgot-password">Forgot Password</Link><Link className="text-cyan-300" to="/register">Registration</Link><Link className="text-cyan-300" to="/admin/login">Admin Login</Link></div></form></Shell>;
 }
 
 function Register() {
@@ -162,7 +163,7 @@ function Register() {
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '', gender: '', address: '', password: '', repeatPassword: '' });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  return <Shell title="Registration"><Message text={msg} error /><form onSubmit={async (e) => { e.preventDefault(); setBusy(true); setMsg(''); try { const result = await request('/api/auth/register', { method: 'POST', body: form }); sessionStorage.setItem('verificationEmail', form.email); navigate(`/register-success?email=${encodeURIComponent(result.email)}`, { replace: true }); } catch (err) { setMsg(err.message); } finally { setBusy(false); } }} className="grid gap-4 md:grid-cols-2">
+  return <Shell title="Registration"><Message text={msg} error /><form onSubmit={async (e) => { e.preventDefault(); setBusy(true); setMsg(''); try { const result = await request('/api/auth/register', { method: 'POST', body: form }); sessionStorage.setItem('verificationEmail', form.email); if (result.code === 'VERIFICATION_EMAIL_FAILED') { navigate('/unverified', { replace: true, state: { email: result.email } }); return; } navigate(`/register-success?email=${encodeURIComponent(result.email)}`, { replace: true }); } catch (err) { setMsg(err.message); } finally { setBusy(false); } }} className="grid gap-4 md:grid-cols-2">
     <Input label="First Name *" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
     <Input label="Last Name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
     <Input label="Email Address *" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
@@ -193,6 +194,15 @@ function VerificationExpired() {
   const email = searchParams.get('email') || '';
   const [msg, setMsg] = useState('');
   return <Shell title="Verification link expired."><Message text={msg} error /><div className="space-y-4"><p>Verification link expired.</p><div className="flex gap-3"><Link className="text-cyan-300" to="/login">Continue to Login</Link><button className="text-cyan-300" onClick={async () => { await request('/api/auth/resend-verification', { method: 'POST', body: { email } }); setMsg('A new verification email has been sent.'); }}>Send New Verification Link</button></div></div></Shell>;
+}
+
+function Unverified() {
+  const auth = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [msg, setMsg] = useState('');
+  const maskedEmail = location.state?.email || auth.state.user?.email || 'your email address';
+  return <Shell title="Email Verification Required"><div className="space-y-4"><p>Your registration was created successfully, but the email address still needs verification.</p><p>Please check your inbox or spam folder, and use a fresh verification link if the old one expired or was missed.</p><p className="text-slate-400">Account: {maskedEmail}</p><Message text={msg} /><div className="flex flex-wrap gap-3"><button className="text-cyan-300" onClick={async () => { const data = await request('/api/auth/resend-verification', { method: 'POST' }); if (data.status === 'verified') { navigate('/login', { replace: true }); return; } setMsg('A new verification link has been sent. Please check your email.'); }}>Resend Verification Email</button><Link className="text-cyan-300" to="/login">Back to Login</Link></div></div></Shell>;
 }
 
 function ForgotPassword() {

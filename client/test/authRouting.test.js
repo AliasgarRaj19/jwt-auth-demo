@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { getAdminLoginRedirect, getDashboardRoute, getLoginRedirect, getRootRedirect } from '../src/authRouting.js';
+import { adminRoutes, getAdminLoginRedirect, getDashboardRoute, getLoginRedirect, getRootRedirect, publicRoutes } from '../src/authRouting.js';
 
 describe('client auth routing helpers', () => {
   it('redirects the root route based on auth state', () => {
     expect(getRootRedirect({ ready: true, accessToken: '', user: null })).toBe('/login');
     expect(getRootRedirect({ ready: true, accessToken: 'access.jwt', user: { role: 'user' } })).toBe('/dashboard');
     expect(getRootRedirect({ ready: true, accessToken: 'access.jwt', user: { role: 'admin' } })).toBe('/admin/dashboard');
+  });
+
+  it('includes the unverified recovery route as public', () => {
+    expect(publicRoutes).toContain('/unverified');
+    expect(adminRoutes).toContain('/admin/dashboard');
   });
 
   it('redirects login routes for authenticated users', () => {

@@ -47,7 +47,9 @@ const mocks = vi.hoisted(() => ({
   hashSecret: vi.fn((value) => `hash:${value}`),
   signAccessToken: vi.fn(async () => 'access.jwt'),
   signRefreshToken: vi.fn(async () => 'refresh.jwt'),
+  signVerificationActionToken: vi.fn(async () => 'verification-action.jwt'),
   verifyRefreshToken: vi.fn(async () => ({ payload: { sub: 'user-1', role: 'user', typ: 'refresh' } })),
+  verifyVerificationActionToken: vi.fn(async () => ({ payload: { sub: 'u1', typ: 'verification-action', purpose: 'resend-verification' } })),
   env: {
     CLIENT_URL: 'http://localhost:5501',
     APP_URL: 'http://localhost:5501',
@@ -68,7 +70,9 @@ vi.mock('../src/lib/crypto.js', () => ({
 vi.mock('../src/lib/jwt.js', () => ({
   signAccessToken: mocks.signAccessToken,
   signRefreshToken: mocks.signRefreshToken,
-  verifyRefreshToken: mocks.verifyRefreshToken
+  signVerificationActionToken: mocks.signVerificationActionToken,
+  verifyRefreshToken: mocks.verifyRefreshToken,
+  verifyVerificationActionToken: mocks.verifyVerificationActionToken
 }));
 vi.mock('../src/config/env.js', () => ({ env: mocks.env }));
 
@@ -88,7 +92,9 @@ const auth = await import('../src/services/auth.js');
   mocks.hashSecret.mockReset();
   mocks.signAccessToken.mockReset();
   mocks.signRefreshToken.mockReset();
+  mocks.signVerificationActionToken.mockReset();
   mocks.verifyRefreshToken.mockReset();
+  mocks.verifyVerificationActionToken.mockReset();
 });
 
 describe('registration and verification flow', () => {
@@ -113,6 +119,17 @@ describe('registration and verification flow', () => {
     const emailArgs = mocks.sendEmail.mock.calls[0][0];
     expect(emailArgs.text).toContain('https://signalgrowth.in/jwt-auth-demo/verify-email?token=token123');
     expect(emailArgs.html).toContain('https://signalgrowth.in/jwt-auth-demo/verify-email?token=token123');
+  });
+
+  it('returns a recovery context when registration email delivery fails', async () => {
+    mocks.prisma.user.create.mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+    mocks.sendEmail.mockRejectedValue(new Error('smtp down'));
+
+    const result = await auth.registerUser({ firstName: 'User', email: 'user@example.com', password: 'password123' });
+
+    expect(result.code).toBe('VERIFICATION_EMAIL_FAILED');
+    expect(result.email).toBe('us***@example.com');
+    expect(result.recoveryToken).toBe('verification-action.jwt');
   });
 
   it('accepts a valid verification token once', async () => {
@@ -169,6 +186,73 @@ describe('registration and verification flow', () => {
     const result = await auth.resendVerificationEmail('user@example.com');
     expect(result.ok).toBe(true);
     expect(mocks.prisma.verificationToken.updateMany).toHaveBeenCalled();
+  });
+
+  it('returns ACCOUNT_UNVERIFIED after a correct password for an unverified account without issuing a session', async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      email: 'user@example.com',
+      passwordHash: 'hashed:correct-password',
+      isActive: true,
+      emailVerifiedAt: null,
+      role: 'user'
+    });
+    mocks.verifyPassword.mockResolvedValue(true);
+
+    const result = await auth.loginUser('user@example.com', 'correct-password');
+
+    expect(result.code).toBe('ACCOUNT_UNVERIFIED');
+    expect(result.email).toBe('us***@example.com');
+    expect(result.recoveryToken).toBe('verification-action.jwt');
+    expect(mocks.signAccessToken).not.toHaveBeenCalled();
+    expect(mocks.signRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps wrong credentials generic even when the account is unverified', async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      email: 'user@example.com',
+      passwordHash: 'hashed:correct-password',
+      isActive: true,
+      emailVerifiedAt: null,
+      role: 'user'
+    });
+    mocks.verifyPassword.mockResolvedValue(false);
+
+    const result = await auth.loginUser('user@example.com', 'wrong-password');
+
+    expect(result.status).toBe('generic');
+    expect(result.code).toBeUndefined();
+    expect(mocks.signVerificationActionToken).not.toHaveBeenCalled();
+  });
+
+  it('reissues verification email tokens from the unverified recovery context', async () => {
+    mocks.verifyVerificationActionToken.mockResolvedValue({ payload: { sub: 'u1', typ: 'verification-action', purpose: 'resend-verification' } });
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'user@example.com', emailVerifiedAt: null });
+    mocks.prisma.verificationToken.updateMany.mockResolvedValue({ count: 1 });
+    mocks.prisma.verificationToken.create.mockResolvedValue({ id: 'vt2' });
+    mocks.sendEmail.mockResolvedValue({});
+
+    const result = await auth.resendVerificationForActionToken('verification-action.jwt');
+
+    expect(result.status).toBe('sent');
+    expect(mocks.prisma.verificationToken.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: 'u1', usedAt: null }
+    }));
+    expect(mocks.prisma.verificationToken.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: 'u1', expiresAt: expect.any(Date) })
+    }));
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns verified if the account is already verified during resend recovery', async () => {
+    mocks.verifyVerificationActionToken.mockResolvedValue({ payload: { sub: 'u1', typ: 'verification-action', purpose: 'resend-verification' } });
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'user@example.com', emailVerifiedAt: new Date() });
+
+    const result = await auth.resendVerificationForActionToken('verification-action.jwt');
+
+    expect(result.status).toBe('verified');
+    expect(mocks.prisma.verificationToken.create).not.toHaveBeenCalled();
   });
 });
 
