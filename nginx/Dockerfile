@@ -6,7 +6,9 @@ RUN npm install
 COPY client client
 WORKDIR /app/client
 ARG VITE_API_URL=/api
+ARG VITE_APP_BASE_PATH=/jwt-auth-demo
 ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -50,7 +50,8 @@ const mocks = vi.hoisted(() => ({
   verifyRefreshToken: vi.fn(async () => ({ payload: { sub: 'user-1', role: 'user', typ: 'refresh' } })),
   env: {
     CLIENT_URL: 'http://localhost:5501',
-    APP_URL: 'http://localhost:5500',
+    APP_URL: 'http://localhost:5501',
+    APP_BASE_PATH: '',
     MASTER_ADMIN_USERNAME: 'admin@example.com',
     MASTER_ADMIN_PASSWORD: 'admin-pass'
   }
@@ -99,6 +100,19 @@ describe('registration and verification flow', () => {
     const emailArgs = mocks.sendEmail.mock.calls[0][0];
     expect(emailArgs.text).toContain('http://localhost:5501/verify-email?token=token123');
     expect(emailArgs.html).toContain('http://localhost:5501/verify-email?token=token123');
+  });
+
+  it('uses the configured production base path for verification emails', async () => {
+    mocks.env.APP_URL = 'https://signalgrowth.in';
+    mocks.env.APP_BASE_PATH = '/jwt-auth-demo';
+    mocks.prisma.user.create.mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+
+    const result = await auth.registerUser({ firstName: 'User', email: 'user@example.com', password: 'password123' });
+
+    expect(result.email).toBe('us***@example.com');
+    const emailArgs = mocks.sendEmail.mock.calls[0][0];
+    expect(emailArgs.text).toContain('https://signalgrowth.in/jwt-auth-demo/verify-email?token=token123');
+    expect(emailArgs.html).toContain('https://signalgrowth.in/jwt-auth-demo/verify-email?token=token123');
   });
 
   it('accepts a valid verification token once', async () => {
@@ -424,5 +438,18 @@ describe('refresh and reset token security', () => {
     expect(mocks.prisma.passwordResetToken.update).toHaveBeenCalledTimes(1);
     expect(mocks.prisma.passwordResetToken.updateMany).toHaveBeenCalled();
     expect(mocks.prisma.refreshToken.updateMany).toHaveBeenCalled();
+  });
+
+  it('uses the configured production base path for reset emails', async () => {
+    mocks.env.APP_URL = 'https://signalgrowth.in';
+    mocks.env.APP_BASE_PATH = '/jwt-auth-demo';
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'user@example.com' });
+
+    const result = await auth.requestPasswordReset('user@example.com');
+
+    expect(result.ok).toBe(true);
+    const emailArgs = mocks.sendEmail.mock.calls[0][0];
+    expect(emailArgs.text).toContain('https://signalgrowth.in/jwt-auth-demo/reset-password?token=token123');
+    expect(emailArgs.html).toContain('https://signalgrowth.in/jwt-auth-demo/reset-password?token=token123');
   });
 });

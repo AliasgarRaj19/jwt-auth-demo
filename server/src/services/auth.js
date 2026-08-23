@@ -7,6 +7,13 @@ import { env } from '../config/env.js';
 
 const maskEmail = (email) => email.replace(/(.{2}).+(@.+)/, '$1***$2');
 
+function buildPublicUrl(pathname) {
+  const basePath = env.APP_BASE_PATH || '';
+  const normalizedBasePath = basePath && !basePath.startsWith('/') ? `/${basePath}` : basePath;
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${String(env.APP_URL || '').replace(/\/+$/, '')}${normalizedBasePath}${normalizedPath}`;
+}
+
 async function storeUserRefreshToken(userId, role, familyId) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const refreshToken = await signRefreshToken({ sub: userId, role });
@@ -91,7 +98,7 @@ export async function registerUser(data) {
   const user = await prisma.user.create({ data: { firstName: data.firstName, lastName: data.lastName || null, email: data.email, phone: data.phone || null, gender: data.gender || null, address: data.address || null, passwordHash } });
   const token = randomToken();
   await prisma.verificationToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
-  const verificationUrl = `${env.CLIENT_URL}/verify-email?token=${encodeURIComponent(token)}`;
+  const verificationUrl = buildPublicUrl(`/verify-email?token=${encodeURIComponent(token)}`);
   await sendEmail({
     to: user.email,
     subject: 'Verify your email',
@@ -121,7 +128,7 @@ export async function resendVerificationEmail(email) {
   await prisma.verificationToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } });
   const token = randomToken();
   await prisma.verificationToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
-  const verificationUrl = `${env.CLIENT_URL}/verify-email?token=${encodeURIComponent(token)}`;
+  const verificationUrl = buildPublicUrl(`/verify-email?token=${encodeURIComponent(token)}`);
   await sendEmail({ to: user.email, subject: 'Verify your email', text: verificationUrl, html: `<a href="${verificationUrl}">${verificationUrl}</a>` });
   return { ok: true };
 }
@@ -198,7 +205,7 @@ export async function requestPasswordReset(email) {
   if (!user) return { ok: true };
   const token = randomToken();
   await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: hashSecret(token), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } });
-  const resetUrl = `${env.CLIENT_URL}/reset-password?token=${encodeURIComponent(token)}`;
+  const resetUrl = buildPublicUrl(`/reset-password?token=${encodeURIComponent(token)}`);
   await sendEmail({ to: user.email, subject: 'Reset your password', text: resetUrl, html: `<a href="${resetUrl}">${resetUrl}</a>` });
   return { ok: true };
 }

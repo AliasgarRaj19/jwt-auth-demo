@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import './index.css';
+import { getApiBaseUrl, getRouterBasename } from './appConfig.js';
 import { isChangePasswordFormValid } from './changePasswordValidation.js';
 import { mergeAuthSession } from './authSession.js';
 import { clearAdminSession, getAdminDashboardControls } from './adminUx.js';
@@ -11,7 +12,7 @@ import { getChangePasswordNavigationItems, getResetPasswordFieldLabels } from '.
 import { restoreSessionOnce } from './sessionRestore.js';
 import { broadcastLogout, broadcastSessionState, listenSessionState } from './sessionSync.js';
 
-const API = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:5500');
+const API = getApiBaseUrl();
 
 async function request(path, { method = 'GET', body, csrfToken, headers = {} } = {}) {
   const res = await fetch(`${API}${path}`, {
@@ -115,7 +116,7 @@ function AdminProtectedRoute({ children }) {
 }
 
 function App() {
-  return <AuthProvider><BrowserRouter><AppRoutes /></BrowserRouter></AuthProvider>;
+  return <AuthProvider><BrowserRouter basename={getRouterBasename()}><AppRoutes /></BrowserRouter></AuthProvider>;
 }
 
 function AppRoutes() {

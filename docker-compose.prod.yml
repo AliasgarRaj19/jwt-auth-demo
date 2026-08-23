@@ -30,8 +30,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    expose:
-      - "5500"
+    ports:
+      - "127.0.0.1:5500:5500"
     command: sh -c "npx prisma generate && npx prisma migrate deploy && node src/index.js"
 
   nginx:
@@ -39,7 +39,8 @@ services:
       context: .
       dockerfile: nginx/Dockerfile
       args:
-        VITE_API_URL: /api
+        VITE_API_URL: /jwt-auth-demo/api
+        VITE_APP_BASE_PATH: /jwt-auth-demo
     env_file:
       - .env.production
     environment:
@@ -49,8 +50,7 @@ services:
     depends_on:
       - server
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:8080:80"
 
 volumes:
   postgres_data:

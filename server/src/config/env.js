@@ -6,6 +6,7 @@ export const env = {
   PORT: Number(process.env.PORT || 4000),
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:5501',
   APP_URL: process.env.APP_URL || 'http://localhost:5501',
+  APP_BASE_PATH: process.env.APP_BASE_PATH || '',
   DATABASE_URL: process.env.DATABASE_URL,
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'dev-access-secret',
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret',
