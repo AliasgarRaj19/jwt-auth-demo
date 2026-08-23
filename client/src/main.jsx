@@ -11,7 +11,7 @@ import { getChangePasswordNavigationItems, getResetPasswordFieldLabels } from '.
 import { restoreSessionOnce } from './sessionRestore.js';
 import { broadcastLogout, broadcastSessionState, listenSessionState } from './sessionSync.js';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5500';
+const API = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:5500');
 
 async function request(path, { method = 'GET', body, csrfToken, headers = {} } = {}) {
   const res = await fetch(`${API}${path}`, {

@@ -20,17 +20,15 @@ describe('HTTP security headers', () => {
     expect(res.headers['referrer-policy']).toBe('no-referrer');
   });
 
-  it('does not send HSTS in development', async () => {
-    const app = createApp();
-    const res = await request(app).get('/health').expect(200);
-    expect(res.headers['strict-transport-security']).toBeUndefined();
-  });
+  it('does not send HSTS in development or production', async () => {
+    const developmentApp = createApp();
+    const developmentRes = await request(developmentApp).get('/health').expect(200);
+    expect(developmentRes.headers['strict-transport-security']).toBeUndefined();
 
-  it('sends HSTS in production', async () => {
     env.NODE_ENV = 'production';
-    const app = createApp();
-    const res = await request(app).get('/health').expect(200);
-    expect(res.headers['strict-transport-security']).toContain('max-age=');
+    const productionApp = createApp();
+    const productionRes = await request(productionApp).get('/health').expect(200);
+    expect(productionRes.headers['strict-transport-security']).toBeUndefined();
   });
 
   it('keeps security headers on error responses', async () => {

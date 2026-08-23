@@ -93,7 +93,7 @@ Standalone portfolio demo for secure registration, email verification, JWT auth,
 
 1. User submits an email address
 2. A reset token is generated with a 15-minute expiration
-3. The hash is stored in SQLite
+3. The hash is stored in PostgreSQL
 4. The emailed link is used once to set a new password
 5. Existing refresh sessions are revoked after reset
 
@@ -143,6 +143,31 @@ Copy `.env.example` to `.env` and configure:
 - `MASTER_ADMIN_PASSWORD`
 - `COOKIE_SECURE`
 
+For production, copy `.env.production.example` to `.env.production` and set:
+
+- `NODE_ENV=production`
+- `CLIENT_URL=https://<production-domain>`
+- `APP_URL=https://<production-domain>`
+- `COOKIE_SECURE=true`
+- `TRUST_PROXY_HOPS=1`
+- `DATABASE_URL`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `JWT_ACCESS_SECRET`
+- `JWT_REFRESH_SECRET`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_SECURE`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `MASTER_ADMIN_USERNAME`
+- `MASTER_ADMIN_PASSWORD`
+- `NGINX_SERVER_NAME`
+- `NGINX_SSL_CERTIFICATE`
+- `NGINX_SSL_CERTIFICATE_KEY`
+
 ## Gmail SMTP
 
 - Use Gmail SMTP credentials through environment variables
@@ -151,13 +176,25 @@ Copy `.env.example` to `.env` and configure:
 
 ## Prisma Setup
 
-Run:
+Local development:
 
 ```bash
 npm install
 docker compose up --build
 docker compose exec server npx prisma generate
 docker compose exec server npx prisma migrate deploy
+```
+
+Production migration command:
+
+```bash
+docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
+```
+
+Production seed command:
+
+```bash
+docker compose -f docker-compose.prod.yml exec server npm run prisma:seed
 ```
 
 ## Local Development
@@ -176,6 +213,16 @@ docker compose down
 ```
 
 PostgreSQL data is persisted in a Docker named volume.
+
+Production Docker workflow:
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml exec server npm run prisma:seed
+```
+
+Production uses the Nginx reverse proxy in [`nginx/default.conf.template`](/E:/Agentic%20AI%20Learning/Opensource%20project/Documents/General%20System/jwt-auth-demo/nginx/default.conf.template) and the build image in [`nginx/Dockerfile`](/E:/Agentic%20AI%20Learning/Opensource%20project/Documents/General%20System/jwt-auth-demo/nginx/Dockerfile).
 
 ## Testing
 
@@ -235,9 +282,12 @@ npm run prisma:seed -w server
 
 ## Production Considerations
 
-- Run behind HTTPS
+- Run behind HTTPS with Nginx terminating TLS
+- Keep the backend behind the reverse proxy and set `TRUST_PROXY_HOPS=1`
+- Use same-origin browser API calls through `/api/...` in production
 - Set secure cookies in production
-- Configure a real `APP_URL`
+- Configure a real `APP_URL` and `CLIENT_URL`
 - Configure a real Gmail SMTP account or equivalent
 - Keep secrets out of source control
-The 24-hour demo-data cleanup used by the public portfolio deployment is VPS infrastructure behavior and is intentionally not included in this reusable authentication source.
+- The known Prisma `deepmerge-ts` advisory currently comes from Prisma tooling, not app runtime code
+- The 24-hour demo-data cleanup used by the public portfolio deployment is VPS infrastructure behavior and is intentionally not included in this reusable authentication source

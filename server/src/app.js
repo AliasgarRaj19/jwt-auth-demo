@@ -14,7 +14,7 @@ export function createApp() {
   app.use(helmet({
     frameguard: { action: 'deny' },
     contentSecurityPolicy: false,
-    hsts: env.NODE_ENV === 'production' ? undefined : false,
+    hsts: false,
     referrerPolicy: { policy: 'no-referrer' }
   }));
   app.use(cors({
@@ -29,6 +29,7 @@ export function createApp() {
   app.use(express.json());
   app.use(cookieParser());
   app.get('/health', (_, res) => res.json({ ok: true }));
+  app.get('/api/health', (_, res) => res.json({ ok: true }));
   app.use('/api/auth', authRouter);
   app.use('/api/user', userRouter);
   app.use('/api/admin', adminRouter);
