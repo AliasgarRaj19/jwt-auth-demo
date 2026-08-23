@@ -6,9 +6,13 @@ export function normalizeBasePath(basePath) {
 }
 
 export function buildApiBaseUrl(basePath, configuredApiUrl) {
-  if (configuredApiUrl) return configuredApiUrl.replace(/\/+$/, '');
+  if (configuredApiUrl) {
+    const trimmed = configuredApiUrl.replace(/\/+$/, '');
+    if (trimmed.endsWith('/api')) return trimmed.slice(0, -4) || '/';
+    return trimmed;
+  }
   const normalizedBasePath = normalizeBasePath(basePath);
-  return `${normalizedBasePath}/api`;
+  return normalizedBasePath || 'http://localhost:5500';
 }
 
 export function buildRouterBasename(basePath) {

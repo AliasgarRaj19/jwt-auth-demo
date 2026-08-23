@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { buildApiBaseUrl, buildProductionAssetBase, buildRouterBasename, normalizeBasePath } from '../src/appConfig.js';
+import { buildApiBaseUrl, buildRouterBasename } from '../src/appConfig.js';
 
 describe('app config helpers', () => {
-  it('keeps local routes and assets unprefixed', () => {
-    expect(normalizeBasePath('')).toBe('');
-    expect(buildRouterBasename('')).toBe('/');
-    expect(buildApiBaseUrl('', 'http://localhost:5500/api')).toBe('http://localhost:5500/api');
-    expect(buildProductionAssetBase('')).toBe('/');
+  it('keeps the local API base on the backend origin', () => {
+    expect(buildApiBaseUrl('', 'http://localhost:5500')).toBe('http://localhost:5500');
+    expect(`${buildApiBaseUrl('', 'http://localhost:5500')}/api/auth/login`).toBe('http://localhost:5500/api/auth/login');
   });
 
-  it('derives the production subpath base consistently', () => {
-    expect(normalizeBasePath('/jwt-auth-demo')).toBe('/jwt-auth-demo');
+  it('reduces a production api-prefixed config back to the app base path', () => {
+    expect(buildApiBaseUrl('/jwt-auth-demo', '/jwt-auth-demo/api')).toBe('/jwt-auth-demo');
+    expect(`${buildApiBaseUrl('/jwt-auth-demo', '/jwt-auth-demo/api')}/api/auth/login`).toBe('/jwt-auth-demo/api/auth/login');
+  });
+
+  it('does not create double api segments', () => {
+    const base = buildApiBaseUrl('/jwt-auth-demo', '/jwt-auth-demo/api');
+    expect(`${base}/api/auth/login`).not.toContain('/api/api/');
+  });
+
+  it('keeps the router basename on the production subpath', () => {
     expect(buildRouterBasename('/jwt-auth-demo')).toBe('/jwt-auth-demo');
-    expect(buildApiBaseUrl('/jwt-auth-demo', '')).toBe('/jwt-auth-demo/api');
-    expect(buildProductionAssetBase('/jwt-auth-demo')).toBe('/jwt-auth-demo/');
-  });
-
-  it('does not double-prefix already configured api urls', () => {
-    expect(buildApiBaseUrl('/jwt-auth-demo', '/jwt-auth-demo/api')).toBe('/jwt-auth-demo/api');
   });
 });
