@@ -10,6 +10,7 @@ function buildApp(options = {}) {
   app.get('/limited', rateLimit(() => 'ip:1', options.preset || rateLimitPresets.login), (_req, res) => res.json({ ok: true }));
   app.post('/login', rateLimit(() => 'login:1', rateLimitPresets.login), (_req, res) => res.json({ ok: true }));
   app.post('/admin-login', rateLimit(() => 'admin:1', rateLimitPresets.adminLogin), (_req, res) => res.json({ ok: true }));
+  app.post('/refresh', rateLimit(() => 'refresh:1', rateLimitPresets.refresh), (_req, res) => res.json({ ok: true }));
   app.post('/forgot-password', rateLimit(() => 'forgot:1', rateLimitPresets.forgotPassword), (_req, res) => res.json({ ok: true }));
   return app;
 }
@@ -55,7 +56,7 @@ describe('rate limiter', () => {
     await request(app).get('/limited').expect(429);
   });
 
-  it('rate limits login, admin login, and forgot password handlers', async () => {
+  it('rate limits login, admin login, refresh, and forgot password handlers', async () => {
     env.NODE_ENV = 'production';
     const app = buildApp();
     for (let i = 0; i < rateLimitPresets.login.limit; i += 1) {
@@ -70,10 +71,27 @@ describe('rate limiter', () => {
     await request(app).post('/admin-login').expect(429);
 
     resetLimiterForTests();
+    for (let i = 0; i < rateLimitPresets.refresh.limit; i += 1) {
+      await request(app).post('/refresh').expect(200);
+    }
+    const refreshRes = await request(app).post('/refresh').expect(429);
+    expect(refreshRes.body.message).toBe('Too many requests. Please try again later.');
+
+    resetLimiterForTests();
     for (let i = 0; i < rateLimitPresets.forgotPassword.limit; i += 1) {
       await request(app).post('/forgot-password').expect(200);
     }
     const res = await request(app).post('/forgot-password').expect(429);
     expect(res.body.message).toBe('Too many requests. Please try again later.');
+  });
+
+  it('keeps development refresh bursts practical', async () => {
+    env.NODE_ENV = 'development';
+    env.RATE_LIMIT_DEV_MULTIPLIER = 20;
+    const app = buildApp();
+    const threshold = rateLimitPresets.refresh.limit * env.RATE_LIMIT_DEV_MULTIPLIER;
+    for (let i = 0; i < threshold; i += 1) {
+      await request(app).post('/refresh').expect(200);
+    }
   });
 });
