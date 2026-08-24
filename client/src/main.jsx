@@ -8,7 +8,7 @@ import { mergeAuthSession } from './authSession.js';
 import { clearAdminSession, getAdminDashboardControls } from './adminUx.js';
 import { getAdminLoginRedirect, getLoginRedirect, getRootRedirect } from './authRouting.js';
 import { buildResetPasswordPayload, getResetTokenFromSearchParams } from './resetPasswordHelpers.js';
-import { getChangePasswordNavigationItems, getResetPasswordFieldLabels } from './authUx.js';
+import { getChangePasswordNavigationItems, getResetPasswordFieldLabels, getResetPasswordUiState } from './authUx.js';
 import { restoreSessionOnce } from './sessionRestore.js';
 import { broadcastLogout, broadcastSessionState, listenSessionState } from './sessionSync.js';
 
@@ -218,6 +218,7 @@ function ResetPassword() {
   const [form, setForm] = useState({ password: '', repeatPassword: '' });
   const [msg, setMsg] = useState('');
   const [validState, setValidState] = useState('loading');
+  const resetUi = getResetPasswordUiState({ validState, message: msg });
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -231,11 +232,11 @@ function ResetPassword() {
     })();
     return () => { cancelled = true; };
   }, [token]);
-  if (validState === 'loading') return <Shell title="Reset Password"><p>Checking reset link...</p></Shell>;
-  if (validState !== 'valid') {
-    return <Shell title="Reset Password"><Message text="This password reset link is invalid, expired, or has already been used." error /><div className="flex gap-3"><Link className="text-cyan-300" to="/forgot-password">Request a New Reset Link</Link></div></Shell>;
+  if (resetUi.showLoading) return <Shell title="Reset Password"><p>Checking reset link...</p></Shell>;
+  if (resetUi.showInvalidState) {
+    return <Shell title="Reset Password"><Message text={resetUi.invalidMessage} error /><div className="flex gap-3"><Link className="text-cyan-300" to={resetUi.requestNewLinkHref}>Request a New Reset Link</Link></div></Shell>;
   }
-  return <Shell title="Reset Password"><Message text={msg} error={msg.includes('invalid') || msg.includes('expired')} /><form onSubmit={async (e) => { e.preventDefault(); const data = await request('/api/auth/reset-password', { method: 'POST', body: buildResetPasswordPayload(form, token) }); setMsg(data.status === 'ok' ? 'Password reset successfully.' : 'This password reset link is invalid, expired, or has already been used.'); }} className="space-y-4"><Input label={labels[0]} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><Input label={labels[1]} type="password" value={form.repeatPassword} onChange={(e) => setForm({ ...form, repeatPassword: e.target.value })} /><Button>{labels[2]}</Button></form></Shell>;
+  return <Shell title="Reset Password"><Message text={msg} error={msg.includes('invalid') || msg.includes('expired')} />{resetUi.showSuccess ? <div className="space-y-4"><p>{resetUi.successMessage}</p><div className="flex gap-3"><Link className="text-cyan-300" to={resetUi.continueToLoginHref}>Continue to Login</Link></div></div> : <form onSubmit={async (e) => { e.preventDefault(); try { const data = await request('/api/auth/reset-password', { method: 'POST', body: buildResetPasswordPayload(form, token) }); if (data.status === 'ok') { setMsg('Password reset successfully.'); setForm({ password: '', repeatPassword: '' }); return; } setMsg(resetUi.invalidMessage); } catch { setMsg(resetUi.invalidMessage); } }} className="space-y-4"><Input label={labels[0]} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><Input label={labels[1]} type="password" value={form.repeatPassword} onChange={(e) => setForm({ ...form, repeatPassword: e.target.value })} /><Button>{labels[2]}</Button></form>}</Shell>;
 }
 
 function Panel() {
