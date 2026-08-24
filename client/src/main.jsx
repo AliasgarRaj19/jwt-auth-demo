@@ -11,6 +11,7 @@ import { buildResetPasswordPayload, getResetTokenFromSearchParams } from './rese
 import { getChangePasswordNavigationItems, getResetPasswordFieldLabels, getResetPasswordUiState } from './authUx.js';
 import { restoreSessionOnce } from './sessionRestore.js';
 import { broadcastLogout, broadcastSessionState, listenSessionState } from './sessionSync.js';
+import { refreshSessionRequest as refreshSessionRequestWithRetry } from './refreshSessionRequest.js';
 
 const API = getApiBaseUrl();
 
@@ -26,12 +27,16 @@ async function request(path, { method = 'GET', body, csrfToken, headers = {} } =
     body: body ? JSON.stringify(body) : undefined
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || 'Request failed');
+  if (!res.ok) {
+    const error = new Error(data.message || 'Request failed');
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
 async function refreshSessionRequest() {
-  return request('/api/auth/refresh', { method: 'POST' });
+  return refreshSessionRequestWithRetry(request);
 }
 
 const AuthContext = createContext(null);

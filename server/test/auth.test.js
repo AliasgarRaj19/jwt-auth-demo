@@ -325,7 +325,7 @@ describe('refresh and reset token security', () => {
     expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(2);
   });
 
-  it('hands off a concurrent replay of the same refresh token to the existing successor without minting a new chain', async () => {
+  it('signals retry for a concurrent replay of the same refresh token without minting a new chain', async () => {
     const tokenRecords = new Map([
       ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
     ]);
@@ -358,15 +358,14 @@ describe('refresh and reset token security', () => {
     const replay = await auth.refreshSession('refresh-a');
 
     expect(first.refreshToken).toBe('refresh-b');
-    expect(replay.refreshToken).toBeNull();
-    expect(replay.accessToken).toBe('access.jwt');
-    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(replay.status).toBe('retry');
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeTruthy();
     expect(tokenRecords.get('hash:refresh-b').id).toBeTruthy();
     expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
     expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
   });
 
-  it('allows a replay of A only inside the short handoff window and consumes the handoff once', async () => {
+  it('repeatedly signals retry for A inside the short handoff window without creating new successors', async () => {
     vi.useFakeTimers();
     const now = new Date('2026-08-24T08:30:00.000Z');
     vi.setSystemTime(now);
@@ -405,10 +404,10 @@ describe('refresh and reset token security', () => {
     const third = await auth.refreshSession('refresh-a');
 
     expect(first.refreshToken).toBe('refresh-b');
-    expect(second.refreshToken).toBeNull();
-    expect(third).toBeNull();
+    expect(second.status).toBe('retry');
+    expect(third.status).toBe('retry');
     expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
-    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeTruthy();
     expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
   });
 
@@ -456,7 +455,7 @@ describe('refresh and reset token security', () => {
     expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
   });
 
-  it('hands off a concurrent replay of the same master admin refresh token without minting a new chain', async () => {
+  it('signals retry for a concurrent replay of the same master admin refresh token without minting a new chain', async () => {
     const tokenRecords = new Map([
       ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', masterAdminId: 'demo-admin', familyId: 'family-admin', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
     ]);
@@ -495,15 +494,14 @@ describe('refresh and reset token security', () => {
     const replay = await auth.refreshSession('refresh-a');
 
     expect(first.refreshToken).toBe('refresh-b');
-    expect(replay.refreshToken).toBeNull();
-    expect(replay.user.role).toBe('admin');
-    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(replay.status).toBe('retry');
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeTruthy();
     expect(tokenRecords.get('hash:refresh-b').id).toBeTruthy();
     expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
     expect(mocks.prisma.masterAdminRefreshToken.create).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a master admin replay of A after the short handoff window', async () => {
+  it('repeatedly signals retry for master admin A inside the short handoff window without creating new successors', async () => {
     vi.useFakeTimers();
     const base = new Date('2026-08-24T08:30:00.000Z');
     vi.setSystemTime(base);
@@ -546,11 +544,13 @@ describe('refresh and reset token security', () => {
     const first = await auth.refreshSession('refresh-a');
     expect(first.refreshToken).toBe('refresh-b');
 
-    await vi.advanceTimersByTimeAsync(6_000);
-    const stale = await auth.refreshSession('refresh-a');
+    const second = await auth.refreshSession('refresh-a');
+    const third = await auth.refreshSession('refresh-a');
 
-    expect(stale).toBeNull();
+    expect(second.status).toBe('retry');
+    expect(third.status).toBe('retry');
     expect(mocks.prisma.masterAdminRefreshToken.create).toHaveBeenCalledTimes(1);
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeTruthy();
   });
 
   it('rejects revoked refresh sessions', async () => {

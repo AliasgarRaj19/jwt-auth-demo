@@ -59,10 +59,15 @@ router.post('/refresh', rateLimit((req) => `refresh:${req.ip}`, rateLimitPresets
   const token = req.cookies.refreshToken;
   const result = await refreshSession(token);
   if (!result) return res.status(401).json({ message: 'Unauthorized' });
-  const csrfToken = newCsrfToken();
-  res.cookie('refreshToken', result.refreshToken, cookieOptions(7 * 24 * 60 * 60_000));
-  res.cookie('csrfToken', csrfToken, { ...cookieOptions(7 * 24 * 60 * 60_000), httpOnly: false });
-  res.json({ accessToken: result.accessToken, csrfToken, user: result.user });
+  if (result.status === 'retry') return res.status(409).json({ message: 'REFRESH_RETRY' });
+  const response = { accessToken: result.accessToken, user: result.user };
+  if (result.refreshToken) {
+    const csrfToken = newCsrfToken();
+    res.cookie('refreshToken', result.refreshToken, cookieOptions(7 * 24 * 60 * 60_000));
+    res.cookie('csrfToken', csrfToken, { ...cookieOptions(7 * 24 * 60 * 60_000), httpOnly: false });
+    response.csrfToken = csrfToken;
+  }
+  res.json(response);
 });
 
 router.post('/logout', async (req, res) => {

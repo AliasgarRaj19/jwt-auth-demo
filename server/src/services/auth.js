@@ -105,17 +105,7 @@ async function resolveRotatedRefreshSession(stored, kind) {
     ? await prisma.masterAdminRefreshToken.findUnique({ where: { id: stored.replacedByTokenId } })
     : await prisma.refreshToken.findUnique({ where: { id: stored.replacedByTokenId } });
   if (!successor || successor.revokedAt || successor.expiresAt < new Date()) return null;
-  const consumed = kind === 'admin'
-    ? await prisma.masterAdminRefreshToken.updateMany({
-        where: { id: stored.id, replacedByTokenId: stored.replacedByTokenId, revokedAt: stored.revokedAt },
-        data: { replacedByTokenId: null }
-      })
-    : await prisma.refreshToken.updateMany({
-        where: { id: stored.id, replacedByTokenId: stored.replacedByTokenId, revokedAt: stored.revokedAt },
-        data: { replacedByTokenId: null }
-      });
-  if (!consumed?.count) return null;
-  return successor;
+  return { status: 'retry' };
 }
 
 function normalizeRefreshToken(refreshToken) {
@@ -228,10 +218,8 @@ export async function refreshSession(refreshToken) {
   if (payload.role === 'admin') {
     const stored = await prisma.masterAdminRefreshToken.findUnique({ where: { tokenHash } });
     const rotated = stored?.revokedAt ? await resolveRotatedRefreshSession(stored, 'admin') : null;
-    if (rotated) {
-      const masterAdmin = await prisma.masterAdmin.findUnique({ where: { id: payload.sub } });
-      if (!masterAdmin || masterAdmin.status !== 'active') return null;
-      return { accessToken: await signAccessToken({ sub: masterAdmin.id, role: 'admin' }), refreshToken: null, user: { id: masterAdmin.id, role: 'admin', username: masterAdmin.username, email: masterAdmin.email } };
+    if (rotated?.status === 'retry') {
+      return { status: 'retry' };
     }
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) return null;
     const masterAdmin = await prisma.masterAdmin.findUnique({ where: { id: payload.sub } });
@@ -241,10 +229,8 @@ export async function refreshSession(refreshToken) {
   if (payload.role !== 'user') return null;
   const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
   const rotated = stored?.revokedAt ? await resolveRotatedRefreshSession(stored, 'user') : null;
-  if (rotated) {
-    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
-    if (!user || !user.isActive) return null;
-    return { accessToken: await signAccessToken({ sub: user.id, role: user.role }), refreshToken: null, user };
+  if (rotated?.status === 'retry') {
+    return { status: 'retry' };
   }
   if (!stored || stored.revokedAt || stored.expiresAt < new Date()) return null;
   const user = await prisma.user.findUnique({ where: { id: payload.sub } });
