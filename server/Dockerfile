@@ -9,5 +9,7 @@ COPY server/src server/src
 WORKDIR /app/server
 RUN npm run prisma:generate
 COPY server server
+RUN addgroup -g 10001 -S jwtapp && adduser -S -D -H -u 10001 -G jwtapp jwtapp && chown -R jwtapp:jwtapp /app
 EXPOSE 4000
+USER jwtapp:jwtapp
 CMD ["node", "src/index.js"]

@@ -3,6 +3,7 @@ dist
 coverage
 .log
 *.log
+*.pem
 .env
 .env.*
 !.env.example
@@ -21,4 +22,6 @@ server/prisma/**/*.sqlite
 server/prisma/**/*.sqlite-journal
 server/prisma/**/*.sqlite-wal
 server/prisma/**/*.sqlite-shm
+server/secrets/
+secrets/
 postgres_data

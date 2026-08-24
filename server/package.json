@@ -10,7 +10,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.mjs",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "jwt:keys": "node scripts/generate-jwt-keys.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

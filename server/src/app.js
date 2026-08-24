@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import cors from 'cors';
 import { env } from './config/env.js';
+import { getAccessJwks } from './lib/jwt.js';
 import { authRouter } from './routes/auth.js';
 import { userRouter } from './routes/user.js';
 import { adminRouter } from './routes/admin.js';
@@ -30,6 +31,14 @@ export function createApp() {
   app.use(cookieParser());
   app.get('/health', (_, res) => res.json({ ok: true }));
   app.get('/api/health', (_, res) => res.json({ ok: true }));
+  app.get('/api/.well-known/jwks.json', async (_req, res, next) => {
+    try {
+      res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+      res.json(await getAccessJwks());
+    } catch (err) {
+      next(err);
+    }
+  });
   app.use('/api/auth', authRouter);
   app.use('/api/user', userRouter);
   app.use('/api/admin', adminRouter);
