@@ -102,6 +102,16 @@ Standalone portfolio demo for secure registration, email verification, JWT auth,
 4. The emailed link is used once to set a new password
 5. Existing refresh sessions are revoked after reset
 
+## Demo-Only Data Retention
+
+The public JWT Auth Demo automatically removes `User` accounts after approximately 24 hours.
+
+- Cleanup applies only to `User` rows and user-owned authentication/session records
+- MasterAdmin and MasterAdminRefreshToken are excluded
+- Cleanup runs as an external hourly VPS job
+- This retention rule is demo-deployment behavior and is not part of the canonical reusable authentication core
+- When cloning this repository for a normal application, remove or disable the demo cleanup job unless temporary user retention is an explicit requirement
+
 ## Admin Read-Only Design
 
 - MasterAdmin is stored in PostgreSQL and separate from `User`
@@ -338,7 +348,6 @@ npm run prisma:seed -w server
 - Keep refresh signing keys private; only their hashed DB records are used for refresh rotation
 - Existing HS256 sessions are intentionally not supported after this migration, so users must log in again once
 - The known Prisma `deepmerge-ts` advisory currently comes from Prisma tooling, not app runtime code
-- The 24-hour demo-data cleanup used by the public portfolio deployment is VPS infrastructure behavior and is intentionally not included in this reusable authentication source
 
 ## Production Deployment Checklist
 
@@ -418,6 +427,32 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec server
 12. Verify container security.
 - Production server uses `cap_drop: ALL`.
 - Production server uses `no-new-privileges:true`.
+
+## Demo Cleanup Commands
+
+Dry run:
+
+```bash
+npm run demo:cleanup -w server -- --dry-run
+```
+
+Real cleanup:
+
+```bash
+npm run demo:cleanup -w server
+```
+
+VPS wrapper:
+
+```bash
+/opt/general-system/jwt-auth-demo/scripts/run-demo-cleanup.sh
+```
+
+Hourly cron entry:
+
+```bash
+0 * * * * /opt/general-system/jwt-auth-demo/scripts/run-demo-cleanup.sh >> /var/log/jwt-auth-demo-cleanup.log 2>&1
+```
 - JWT keys are mounted read-only.
 13. Verify health.
 ```bash

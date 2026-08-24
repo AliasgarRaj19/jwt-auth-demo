@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.mjs",
+    "demo:cleanup": "node scripts/cleanup-demo-users.mjs",
     "prisma:studio": "prisma studio",
     "jwt:keys": "node scripts/generate-jwt-keys.mjs"
   },
