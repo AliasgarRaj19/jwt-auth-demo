@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   prisma: {
@@ -78,13 +78,19 @@ vi.mock('../src/config/env.js', () => ({ env: mocks.env }));
 
 const auth = await import('../src/services/auth.js');
 
+function findRecordByWhere(records, where) {
+  if (where?.tokenHash) return records.get(where.tokenHash) || null;
+  if (where?.id) return [...records.values()].find((record) => record.id === where.id) || null;
+  return null;
+}
+
   beforeEach(() => {
     Object.values(mocks.prisma).forEach((group) => {
       if (group && typeof group === 'object') {
         Object.values(group).forEach((fn) => fn.mockReset?.());
       }
     });
-    mocks.prisma.$transaction.mockImplementation(async (ops) => Promise.all(ops));
+  mocks.prisma.$transaction.mockImplementation(async (ops) => Promise.all(ops));
   mocks.sendEmail.mockReset();
   mocks.hashPassword.mockReset();
   mocks.verifyPassword.mockReset();
@@ -95,6 +101,11 @@ const auth = await import('../src/services/auth.js');
   mocks.signVerificationActionToken.mockReset();
   mocks.verifyRefreshToken.mockReset();
   mocks.verifyVerificationActionToken.mockReset();
+  vi.useRealTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('registration and verification flow', () => {
@@ -283,17 +294,18 @@ describe('refresh and reset token security', () => {
 
   it('supports sequential refresh rotation from A to B to C', async () => {
     const tokenRecords = new Map([
-      ['hash:refresh-a', { tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }],
-      ['hash:refresh-b', { tokenHash: 'hash:refresh-b', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }],
+      ['hash:refresh-b', { id: 'rt-b', tokenHash: 'hash:refresh-b', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
     ]);
-    mocks.prisma.refreshToken.findUnique.mockImplementation(async ({ where: { tokenHash } }) => tokenRecords.get(tokenHash) || null);
+    mocks.prisma.refreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
     mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
     mocks.signRefreshToken
       .mockResolvedValueOnce('refresh-b')
       .mockResolvedValueOnce('refresh-c');
     mocks.prisma.refreshToken.create.mockImplementation(async ({ data }) => {
-      tokenRecords.set(data.tokenHash, { ...data, revokedAt: null });
-      return data;
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
     });
     mocks.prisma.refreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
       const current = tokenRecords.get(tokenHash);
@@ -303,11 +315,242 @@ describe('refresh and reset token security', () => {
 
     const first = await auth.refreshSession('refresh-a');
     const second = await auth.refreshSession(first.refreshToken);
+    const stale = await auth.refreshSession('refresh-a');
 
     expect(first.refreshToken).toBe('refresh-b');
     expect(second.refreshToken).toBe('refresh-c');
     expect(tokenRecords.get('hash:refresh-a').revokedAt).toBeInstanceOf(Date);
     expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeInstanceOf(Date);
+    expect(stale).toBeNull();
+    expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands off a concurrent replay of the same refresh token to the existing successor without minting a new chain', async () => {
+    const tokenRecords = new Map([
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
+    ]);
+    mocks.prisma.refreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
+    mocks.signRefreshToken.mockResolvedValueOnce('refresh-b');
+    mocks.prisma.refreshToken.create.mockImplementation(async ({ data }) => {
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.refreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
+      const current = tokenRecords.get(tokenHash);
+      if (current) tokenRecords.set(tokenHash, { ...current, ...data });
+      return tokenRecords.get(tokenHash);
+    });
+    mocks.prisma.refreshToken.updateMany.mockImplementation(async ({ where, data }) => {
+      const current = tokenRecords.get('hash:refresh-a');
+      if (!current) return { count: 0 };
+      const matches =
+        current.id === where.id &&
+        current.replacedByTokenId === where.replacedByTokenId &&
+        current.revokedAt?.getTime?.() === where.revokedAt?.getTime?.();
+      if (!matches) return { count: 0 };
+      tokenRecords.set('hash:refresh-a', { ...current, ...data });
+      return { count: 1 };
+    });
+
+    const first = await auth.refreshSession('refresh-a');
+    const replay = await auth.refreshSession('refresh-a');
+
+    expect(first.refreshToken).toBe('refresh-b');
+    expect(replay.refreshToken).toBeNull();
+    expect(replay.accessToken).toBe('access.jwt');
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(tokenRecords.get('hash:refresh-b').id).toBeTruthy();
+    expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
+    expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a replay of A only inside the short handoff window and consumes the handoff once', async () => {
+    vi.useFakeTimers();
+    const now = new Date('2026-08-24T08:30:00.000Z');
+    vi.setSystemTime(now);
+    const tokenRecords = new Map([
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(now.getTime() + 60_000) }]
+    ]);
+    mocks.prisma.refreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
+    mocks.signRefreshToken.mockResolvedValueOnce('refresh-b');
+    mocks.prisma.refreshToken.create.mockImplementation(async ({ data }) => {
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.refreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
+      const current = tokenRecords.get(tokenHash);
+      if (current) tokenRecords.set(tokenHash, { ...current, ...data });
+      return tokenRecords.get(tokenHash);
+    });
+    mocks.prisma.refreshToken.updateMany.mockImplementation(async ({ where, data }) => {
+      const current = tokenRecords.get('hash:refresh-a');
+      if (!current) return { count: 0 };
+      const withinWindow = now.getTime() - current.revokedAt.getTime() <= 5_000;
+      const matches =
+        withinWindow &&
+        current.id === where.id &&
+        current.replacedByTokenId === where.replacedByTokenId &&
+        current.revokedAt.getTime() === where.revokedAt.getTime();
+      if (!matches) return { count: 0 };
+      tokenRecords.set('hash:refresh-a', { ...current, ...data });
+      return { count: 1 };
+    });
+
+    const first = await auth.refreshSession('refresh-a');
+    const second = await auth.refreshSession('refresh-a');
+    const third = await auth.refreshSession('refresh-a');
+
+    expect(first.refreshToken).toBe('refresh-b');
+    expect(second.refreshToken).toBeNull();
+    expect(third).toBeNull();
+    expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
+  });
+
+  it('rejects a replay of A after the short handoff window', async () => {
+    vi.useFakeTimers();
+    const base = new Date('2026-08-24T08:30:00.000Z');
+    vi.setSystemTime(base);
+    const tokenRecords = new Map([
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', userId: 'u1', familyId: 'family-1', revokedAt: null, expiresAt: new Date(base.getTime() + 60_000) }]
+    ]);
+    mocks.prisma.refreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
+    mocks.signRefreshToken.mockResolvedValueOnce('refresh-b');
+    mocks.prisma.refreshToken.create.mockImplementation(async ({ data }) => {
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.refreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
+      const current = tokenRecords.get(tokenHash);
+      if (current) tokenRecords.set(tokenHash, { ...current, ...data });
+      return tokenRecords.get(tokenHash);
+    });
+    mocks.prisma.refreshToken.updateMany.mockImplementation(async ({ where, data }) => {
+      const current = tokenRecords.get('hash:refresh-a');
+      if (!current || !current.revokedAt) return { count: 0 };
+      const withinWindow = base.getTime() - current.revokedAt.getTime() <= 5_000;
+      const matches =
+        withinWindow &&
+        current.id === where.id &&
+        current.replacedByTokenId === where.replacedByTokenId &&
+        current.revokedAt.getTime() === where.revokedAt.getTime();
+      if (!matches) return { count: 0 };
+      tokenRecords.set('hash:refresh-a', { ...current, ...data });
+      return { count: 1 };
+    });
+
+    const first = await auth.refreshSession('refresh-a');
+    expect(first.refreshToken).toBe('refresh-b');
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    const stale = await auth.refreshSession('refresh-a');
+
+    expect(stale).toBeNull();
+    expect(mocks.prisma.refreshToken.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands off a concurrent replay of the same master admin refresh token without minting a new chain', async () => {
+    const tokenRecords = new Map([
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', masterAdminId: 'demo-admin', familyId: 'family-admin', revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }]
+    ]);
+    mocks.prisma.masterAdminRefreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
+    mocks.prisma.masterAdmin.findUnique.mockResolvedValue({
+      id: 'demo-admin',
+      username: 'admin@example.com',
+      email: 'admin@example.com',
+      status: 'active'
+    });
+    mocks.verifyRefreshToken.mockResolvedValue({ payload: { sub: 'demo-admin', role: 'admin', typ: 'refresh' } });
+    mocks.signRefreshToken.mockResolvedValueOnce('refresh-b');
+    mocks.prisma.masterAdminRefreshToken.create.mockImplementation(async ({ data }) => {
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.masterAdminRefreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
+      const current = tokenRecords.get(tokenHash);
+      if (current) tokenRecords.set(tokenHash, { ...current, ...data });
+      return tokenRecords.get(tokenHash);
+    });
+    mocks.prisma.masterAdminRefreshToken.updateMany.mockImplementation(async ({ where, data }) => {
+      const current = tokenRecords.get('hash:refresh-a');
+      if (!current) return { count: 0 };
+      const matches =
+        current.id === where.id &&
+        current.replacedByTokenId === where.replacedByTokenId &&
+        current.revokedAt?.getTime?.() === where.revokedAt?.getTime?.();
+      if (!matches) return { count: 0 };
+      tokenRecords.set('hash:refresh-a', { ...current, ...data });
+      return { count: 1 };
+    });
+
+    const first = await auth.refreshSession('refresh-a');
+    const replay = await auth.refreshSession('refresh-a');
+
+    expect(first.refreshToken).toBe('refresh-b');
+    expect(replay.refreshToken).toBeNull();
+    expect(replay.user.role).toBe('admin');
+    expect(tokenRecords.get('hash:refresh-a').replacedByTokenId).toBeNull();
+    expect(tokenRecords.get('hash:refresh-b').id).toBeTruthy();
+    expect(tokenRecords.get('hash:refresh-b').revokedAt).toBeNull();
+    expect(mocks.prisma.masterAdminRefreshToken.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a master admin replay of A after the short handoff window', async () => {
+    vi.useFakeTimers();
+    const base = new Date('2026-08-24T08:30:00.000Z');
+    vi.setSystemTime(base);
+    const tokenRecords = new Map([
+      ['hash:refresh-a', { id: 'rt-a', tokenHash: 'hash:refresh-a', masterAdminId: 'demo-admin', familyId: 'family-admin', revokedAt: null, expiresAt: new Date(base.getTime() + 60_000) }]
+    ]);
+    mocks.prisma.masterAdminRefreshToken.findUnique.mockImplementation(async ({ where }) => findRecordByWhere(tokenRecords, where));
+    mocks.prisma.masterAdmin.findUnique.mockResolvedValue({
+      id: 'demo-admin',
+      username: 'admin@example.com',
+      email: 'admin@example.com',
+      status: 'active'
+    });
+    mocks.verifyRefreshToken.mockResolvedValue({ payload: { sub: 'demo-admin', role: 'admin', typ: 'refresh' } });
+    mocks.signRefreshToken.mockResolvedValueOnce('refresh-b');
+    mocks.prisma.masterAdminRefreshToken.create.mockImplementation(async ({ data }) => {
+      const record = { id: data.id, ...data, revokedAt: null };
+      tokenRecords.set(data.tokenHash, record);
+      return record;
+    });
+    mocks.prisma.masterAdminRefreshToken.update.mockImplementation(async ({ where: { tokenHash }, data }) => {
+      const current = tokenRecords.get(tokenHash);
+      if (current) tokenRecords.set(tokenHash, { ...current, ...data });
+      return tokenRecords.get(tokenHash);
+    });
+    mocks.prisma.masterAdminRefreshToken.updateMany.mockImplementation(async ({ where, data }) => {
+      const current = tokenRecords.get('hash:refresh-a');
+      if (!current || !current.revokedAt) return { count: 0 };
+      const withinWindow = base.getTime() - current.revokedAt.getTime() <= 5_000;
+      const matches =
+        withinWindow &&
+        current.id === where.id &&
+        current.replacedByTokenId === where.replacedByTokenId &&
+        current.revokedAt.getTime() === where.revokedAt.getTime();
+      if (!matches) return { count: 0 };
+      tokenRecords.set('hash:refresh-a', { ...current, ...data });
+      return { count: 1 };
+    });
+
+    const first = await auth.refreshSession('refresh-a');
+    expect(first.refreshToken).toBe('refresh-b');
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    const stale = await auth.refreshSession('refresh-a');
+
+    expect(stale).toBeNull();
+    expect(mocks.prisma.masterAdminRefreshToken.create).toHaveBeenCalledTimes(1);
   });
 
   it('rejects revoked refresh sessions', async () => {

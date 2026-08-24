@@ -6,6 +6,7 @@ import { sendEmail } from './email.js';
 import { env } from '../config/env.js';
 
 const maskEmail = (email) => email.replace(/(.{2}).+(@.+)/, '$1***$2');
+const REFRESH_HANDOFF_WINDOW_MS = 5_000;
 
 function buildPublicUrl(pathname) {
   const basePath = env.APP_BASE_PATH || '';
@@ -62,10 +63,11 @@ async function rotateUserRefreshToken(currentTokenHash, stored, user) {
   const newAccessToken = await signAccessToken({ sub: user.id, role: user.role });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const newRefreshToken = await signRefreshToken({ sub: user.id, role: user.role });
+    const newRefreshTokenId = crypto.randomUUID();
     try {
       await prisma.$transaction([
-        prisma.refreshToken.update({ where: { tokenHash: currentTokenHash }, data: { revokedAt: new Date() } }),
-        prisma.refreshToken.create({ data: { userId: user.id, tokenHash: hashSecret(newRefreshToken), familyId: stored.familyId, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } })
+        prisma.refreshToken.update({ where: { tokenHash: currentTokenHash }, data: { revokedAt: new Date(), replacedByTokenId: newRefreshTokenId } }),
+        prisma.refreshToken.create({ data: { id: newRefreshTokenId, userId: user.id, tokenHash: hashSecret(newRefreshToken), familyId: stored.familyId, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } })
       ]);
       return { accessToken: newAccessToken, refreshToken: newRefreshToken, user };
     } catch (err) {
@@ -80,10 +82,11 @@ async function rotateMasterAdminRefreshToken(currentTokenHash, stored, masterAdm
   const newAccessToken = await signAccessToken({ sub: masterAdmin.id, role });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const newRefreshToken = await signRefreshToken({ sub: masterAdmin.id, role });
+    const newRefreshTokenId = crypto.randomUUID();
     try {
       await prisma.$transaction([
-        prisma.masterAdminRefreshToken.update({ where: { tokenHash: currentTokenHash }, data: { revokedAt: new Date() } }),
-        prisma.masterAdminRefreshToken.create({ data: { masterAdminId: masterAdmin.id, tokenHash: hashSecret(newRefreshToken), familyId: stored.familyId, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } })
+        prisma.masterAdminRefreshToken.update({ where: { tokenHash: currentTokenHash }, data: { revokedAt: new Date(), replacedByTokenId: newRefreshTokenId } }),
+        prisma.masterAdminRefreshToken.create({ data: { id: newRefreshTokenId, masterAdminId: masterAdmin.id, tokenHash: hashSecret(newRefreshToken), familyId: stored.familyId, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } })
       ]);
       return { accessToken: newAccessToken, refreshToken: newRefreshToken, user: { id: masterAdmin.id, role: 'admin', username: masterAdmin.username, email: masterAdmin.email } };
     } catch (err) {
@@ -91,6 +94,28 @@ async function rotateMasterAdminRefreshToken(currentTokenHash, stored, masterAdm
     }
   }
   return null;
+}
+
+async function resolveRotatedRefreshSession(stored, kind) {
+  if (!stored?.revokedAt || !stored?.replacedByTokenId) return null;
+  const now = new Date();
+  if (stored.expiresAt < now) return null;
+  if (now.getTime() - new Date(stored.revokedAt).getTime() > REFRESH_HANDOFF_WINDOW_MS) return null;
+  const successor = kind === 'admin'
+    ? await prisma.masterAdminRefreshToken.findUnique({ where: { id: stored.replacedByTokenId } })
+    : await prisma.refreshToken.findUnique({ where: { id: stored.replacedByTokenId } });
+  if (!successor || successor.revokedAt || successor.expiresAt < new Date()) return null;
+  const consumed = kind === 'admin'
+    ? await prisma.masterAdminRefreshToken.updateMany({
+        where: { id: stored.id, replacedByTokenId: stored.replacedByTokenId, revokedAt: stored.revokedAt },
+        data: { replacedByTokenId: null }
+      })
+    : await prisma.refreshToken.updateMany({
+        where: { id: stored.id, replacedByTokenId: stored.replacedByTokenId, revokedAt: stored.revokedAt },
+        data: { replacedByTokenId: null }
+      });
+  if (!consumed?.count) return null;
+  return successor;
 }
 
 function normalizeRefreshToken(refreshToken) {
@@ -202,6 +227,12 @@ export async function refreshSession(refreshToken) {
   if (!payload) return null;
   if (payload.role === 'admin') {
     const stored = await prisma.masterAdminRefreshToken.findUnique({ where: { tokenHash } });
+    const rotated = stored?.revokedAt ? await resolveRotatedRefreshSession(stored, 'admin') : null;
+    if (rotated) {
+      const masterAdmin = await prisma.masterAdmin.findUnique({ where: { id: payload.sub } });
+      if (!masterAdmin || masterAdmin.status !== 'active') return null;
+      return { accessToken: await signAccessToken({ sub: masterAdmin.id, role: 'admin' }), refreshToken: null, user: { id: masterAdmin.id, role: 'admin', username: masterAdmin.username, email: masterAdmin.email } };
+    }
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) return null;
     const masterAdmin = await prisma.masterAdmin.findUnique({ where: { id: payload.sub } });
     if (!masterAdmin || masterAdmin.status !== 'active') return null;
@@ -209,6 +240,12 @@ export async function refreshSession(refreshToken) {
   }
   if (payload.role !== 'user') return null;
   const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+  const rotated = stored?.revokedAt ? await resolveRotatedRefreshSession(stored, 'user') : null;
+  if (rotated) {
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || !user.isActive) return null;
+    return { accessToken: await signAccessToken({ sub: user.id, role: user.role }), refreshToken: null, user };
+  }
   if (!stored || stored.revokedAt || stored.expiresAt < new Date()) return null;
   const user = await prisma.user.findUnique({ where: { id: payload.sub } });
   if (!user || !user.isActive) return null;
