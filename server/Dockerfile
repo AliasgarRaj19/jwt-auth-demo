@@ -6,6 +6,7 @@ RUN npm install
 COPY server/prisma.config.ts server/prisma.config.ts
 COPY server/prisma server/prisma
 COPY server/src server/src
+COPY server/scripts server/scripts
 WORKDIR /app/server
 RUN npm run prisma:generate
 COPY server server
