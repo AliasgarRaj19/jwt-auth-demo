@@ -76,6 +76,7 @@ describe('rate limiter', () => {
     }
     const refreshRes = await request(app).post('/refresh').expect(429);
     expect(refreshRes.body.message).toBe('Too many requests. Please try again later.');
+    expect(rateLimitPresets.refresh.limit).toBe(350);
 
     resetLimiterForTests();
     for (let i = 0; i < rateLimitPresets.forgotPassword.limit; i += 1) {
@@ -90,7 +91,8 @@ describe('rate limiter', () => {
     env.RATE_LIMIT_DEV_MULTIPLIER = 20;
     const app = buildApp();
     const threshold = rateLimitPresets.refresh.limit * env.RATE_LIMIT_DEV_MULTIPLIER;
-    for (let i = 0; i < threshold; i += 1) {
+    expect(threshold).toBe(7000);
+    for (let i = 0; i < 100; i += 1) {
       await request(app).post('/refresh').expect(200);
     }
   });

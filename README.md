@@ -59,6 +59,7 @@ Standalone portfolio demo for secure registration, email verification, JWT auth,
 - CSRF-protected state-changing requests use a double-submit token strategy
 - Rate limiting is applied to sensitive endpoints
 - Production-safe error handling avoids leaking stack traces or token details
+- The production refresh limiter is intentionally higher at 350 requests per 10 minutes per client IP so session restoration, multi-tab usage, and shared NAT traffic do not trip it; credential-entry endpoints retain stricter limits and refresh auth is still independently protected by RS256, JWKS, rotation, and database-backed sessions
 
 ## Docker Architecture
 

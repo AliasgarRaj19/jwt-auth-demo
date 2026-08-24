@@ -42,7 +42,7 @@ export const rateLimitPresets = {
   resetPassword: { limit: 5, windowMs: 10 * 60_000 },
   verifyEmail: { limit: 10, windowMs: 10 * 60_000 },
   resetPasswordValidate: { limit: 20, windowMs: 10 * 60_000 },
-  refresh: { limit: 60, windowMs: 10 * 60_000 },
+  refresh: { limit: 350, windowMs: 10 * 60_000 },
   changePassword: { limit: 10, windowMs: 10 * 60_000 }
 };
 
