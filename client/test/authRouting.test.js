@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adminRoutes, getAdminLoginRedirect, getDashboardRoute, getLoginRedirect, getRootRedirect, publicRoutes } from '../src/authRouting.js';
+import { adminRoutes, getAdminLoginRedirect, getDashboardRoute, getLoginRedirect, getProtectedRouteRedirect, getRootRedirect, publicRoutes } from '../src/authRouting.js';
 
 describe('client auth routing helpers', () => {
   it('redirects the root route based on auth state', () => {
@@ -21,5 +21,18 @@ describe('client auth routing helpers', () => {
   it('maps roles to dashboard routes', () => {
     expect(getDashboardRoute('user')).toBe('/dashboard');
     expect(getDashboardRoute('admin')).toBe('/admin/dashboard');
+  });
+
+  it('preserves an authenticated user session when the user opens an admin route', () => {
+    expect(getProtectedRouteRedirect({ auth: { ready: true, accessToken: 'access.jwt', user: { role: 'user' } }, requiredRole: 'admin' })).toBe('/dashboard');
+  });
+
+  it('preserves an authenticated admin session when the admin opens a user route', () => {
+    expect(getProtectedRouteRedirect({ auth: { ready: true, accessToken: 'access.jwt', user: { role: 'admin' } }, requiredRole: 'user' })).toBe('/admin/dashboard');
+  });
+
+  it('routes unauthenticated visitors to the matching login page without clearing session state', () => {
+    expect(getProtectedRouteRedirect({ auth: { ready: true, accessToken: '', user: null }, requiredRole: 'user' })).toBe('/login');
+    expect(getProtectedRouteRedirect({ auth: { ready: true, accessToken: '', user: null }, requiredRole: 'admin' })).toBe('/admin/login');
   });
 });

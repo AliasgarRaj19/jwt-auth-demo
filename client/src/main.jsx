@@ -6,7 +6,7 @@ import { getApiBaseUrl, getRouterBasename } from './appConfig.js';
 import { isChangePasswordFormValid } from './changePasswordValidation.js';
 import { mergeAuthSession } from './authSession.js';
 import { clearAdminSession, getAdminDashboardControls } from './adminUx.js';
-import { getAdminLoginRedirect, getLoginRedirect, getRootRedirect } from './authRouting.js';
+import { getAdminLoginRedirect, getLoginRedirect, getProtectedRouteRedirect, getRootRedirect } from './authRouting.js';
 import { buildResetPasswordPayload, getResetTokenFromSearchParams } from './resetPasswordHelpers.js';
 import { getChangePasswordNavigationItems, getResetPasswordFieldLabels, getResetPasswordUiState } from './authUx.js';
 import { restoreSessionOnce } from './sessionRestore.js';
@@ -102,16 +102,16 @@ function PublicLoginGate({ children }) {
 function UserProtectedRoute({ children }) {
   const auth = useAuth();
   if (!auth.state.ready) return <Shell title="Loading"><p>Restoring session...</p></Shell>;
-  if (!auth.state.accessToken) return <Navigate to="/login" replace />;
-  if (auth.state.user?.role === 'admin') return <Navigate to="/admin/dashboard" replace />;
+  const target = getProtectedRouteRedirect({ auth: auth.state, requiredRole: 'user' });
+  if (target) return <Navigate to={target} replace />;
   return children;
 }
 
 function AdminProtectedRoute({ children }) {
   const auth = useAuth();
   if (!auth.state.ready) return <Shell title="Loading"><p>Restoring session...</p></Shell>;
-  if (!auth.state.accessToken) return <Navigate to="/admin/login" replace />;
-  if (auth.state.user?.role !== 'admin') return <Navigate to="/dashboard" replace />;
+  const target = getProtectedRouteRedirect({ auth: auth.state, requiredRole: 'admin' });
+  if (target) return <Navigate to={target} replace />;
   return children;
 }
 

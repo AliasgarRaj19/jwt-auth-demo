@@ -29,6 +29,17 @@ export function getAuthenticatedLandingRoute({ pathname, accessToken, user }) {
   return null;
 }
 
+export function getProtectedRouteRedirect({ auth, requiredRole }) {
+  if (!auth?.ready || !auth.accessToken) {
+    return requiredRole === 'admin' ? '/admin/login' : '/login';
+  }
+  const actualRole = auth.user?.role || 'user';
+  if (actualRole === requiredRole) {
+    return null;
+  }
+  return getDashboardRoute(actualRole);
+}
+
 export function getRouteFromLink(href) {
   return href;
 }
